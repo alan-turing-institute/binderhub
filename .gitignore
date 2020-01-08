@@ -1,6 +1,3 @@
-# Ignore VSCode settings
-.vscode/
-
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -116,3 +113,4 @@ helm-chart/travis-binder.yaml
 
 # Federation data page
 doc/federation/data-federation.txt
+

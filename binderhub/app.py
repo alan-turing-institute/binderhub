@@ -20,19 +20,22 @@ import tornado.options
 import tornado.log
 from tornado.log import app_log
 import tornado.web
-from traitlets import Unicode, Integer, Bool, Dict, validate, TraitError, default
+from traitlets import Unicode, Integer, Bool, Dict, validate, TraitError, Union, default
 from traitlets.config import Application
 from jupyterhub.services.auth import HubOAuthCallbackHandler
+from jupyterhub.traitlets import Callable
 
 from .base import AboutHandler, Custom404, VersionHandler
 from .build import Build
 from .builder import BuildHandler
+from .health import HealthHandler
 from .launcher import Launcher
 from .registry import DockerRegistry
 from .main import MainHandler, ParameterizedMainHandler, LegacyRedirectHandler
 from .repoproviders import (GitHubRepoProvider, GitRepoProvider,
                             GitLabRepoProvider, GistRepoProvider,
-                            ZenodoProvider)
+                            ZenodoProvider, FigshareProvider,
+                            DataverseProvider)
 from .metrics import MetricsHandler
 
 from .utils import ByteSpecification, url_path_join
@@ -145,13 +148,27 @@ class BinderHub(Application):
             proposal.value = proposal.value + '/'
         return proposal.value
 
-    badge_base_url = Unicode(
-        '',
-        help="Base URL to use when generating launch badges",
+    badge_base_url = Union(
+        trait_types=[Unicode(), Callable()],
+        help="""
+        Base URL to use when generating launch badges.
+        Can also be a function that is passed the current handler and returns
+        the badge base URL, or "" for the default.
+
+        For example, you could get the badge_base_url from a custom HTTP
+        header, the Referer header, or from a request parameter
+        """,
         config=True
     )
+
+    @default('badge_base_url')
+    def _badge_base_url_default(self):
+        return ''
+
     @validate('badge_base_url')
     def _valid_badge_base_url(self, proposal):
+        if callable(proposal.value):
+            return proposal.value
         # add a trailing slash only when a value is set
         if proposal.value and not proposal.value.endswith('/'):
             proposal.value = proposal.value + '/'
@@ -162,11 +179,6 @@ class BinderHub(Application):
         help="""If JupyterHub authentication enabled,
         require user to login (don't create temporary users during launch) and
         start the new server for the logged in user.""",
-        config=True)
-
-    use_named_servers = Bool(
-        False,
-        help="Use named servers when authentication is enabled.",
         config=True)
 
     port = Integer(
@@ -195,6 +207,19 @@ class BinderHub(Application):
         config=True,
     )
 
+    sticky_builds = Bool(
+        False,
+        help="""
+        Attempt to assign builds for the same repository to the same node.
+
+        In order to speed up re-builds of a repository all its builds will
+        be assigned to the same node in the cluster.
+
+        Note: This feature only works if you also enable docker-in-docker support.
+        """,
+        config=True,
+    )
+
     use_registry = Bool(
         True,
         help="""
@@ -215,6 +240,23 @@ class BinderHub(Application):
 
         0 (default) means no quotas.
         """,
+        config=True,
+    )
+
+    pod_quota = Integer(
+        None,
+        help="""
+        The number of concurrent pods this hub has been designed to support.
+
+        This quota is used as an indication for how much above or below the
+        design capacity a hub is running. It is not used to reject new launch
+        requests when usage is above the quota.
+
+        The default corresponds to no quota, 0 means the hub can't accept pods
+        (maybe because it is in maintenance mode), and any positive integer
+        sets the quota.
+        """,
+        allow_none=True,
         config=True,
     )
 
@@ -339,7 +381,7 @@ class BinderHub(Application):
     )
 
     build_image = Unicode(
-        'jupyter/repo2docker:0.8.0',
+        'jupyter/repo2docker:0.10.0',
         help="""
         The repo2docker image to be used for doing builds
         """,
@@ -361,6 +403,8 @@ class BinderHub(Application):
             'git': GitRepoProvider,
             'gl': GitLabRepoProvider,
             'zenodo': ZenodoProvider,
+            'figshare': FigshareProvider,
+            'dataverse': DataverseProvider,
         },
         config=True,
         help="""
@@ -490,7 +534,6 @@ class BinderHub(Application):
                 kubernetes.config.load_kube_config()
             self.tornado_settings["kubernetes_client"] = self.kube_client = kubernetes.client.CoreV1Api()
 
-
         # times 2 for log + build threads
         self.build_pool = ThreadPoolExecutor(self.concurrent_build_limit * 2)
         # default executor for asyncifying blocking calls (e.g. to kubernetes, docker).
@@ -538,7 +581,9 @@ class BinderHub(Application):
             "build_image": self.build_image,
             'build_node_selector': self.build_node_selector,
             'build_pool': self.build_pool,
+            "sticky_builds": self.sticky_builds,
             'log_tail_lines': self.log_tail_lines,
+            'pod_quota': self.pod_quota,
             'per_repo_quota': self.per_repo_quota,
             'per_repo_quota_higher': self.per_repo_quota_higher,
             'repo_providers': self.repo_providers,
@@ -560,7 +605,6 @@ class BinderHub(Application):
             'template_variables': self.template_variables,
             'executor': self.executor,
             'auth_enabled': self.auth_enabled,
-            'use_named_servers': self.use_named_servers,
             'event_log': self.event_log,
             'normalized_origin': self.normalized_origin
         })
@@ -586,6 +630,10 @@ class BinderHub(Application):
             (r'/(badge\_logo\.svg)',
                 tornado.web.StaticFileHandler,
                 {'path': os.path.join(self.tornado_settings['static_path'], 'images')}),
+            # /logo_social.png
+            (r'/(logo\_social\.png)',
+                tornado.web.StaticFileHandler,
+                {'path': os.path.join(self.tornado_settings['static_path'], 'images')}),
             # /favicon_XXX.ico
             (r'/(favicon\_fail\.ico)',
                 tornado.web.StaticFileHandler,
@@ -597,6 +645,7 @@ class BinderHub(Application):
                 tornado.web.StaticFileHandler,
                 {'path': os.path.join(self.tornado_settings['static_path'], 'images')}),
             (r'/about', AboutHandler),
+            (r'/health', HealthHandler, {'hub_url': self.hub_url}),
             (r'/', MainHandler),
             (r'.*', Custom404),
         ]

@@ -22,6 +22,25 @@ For information on how to configure your JupyterHub deployment, see the
 `JupyterHub for Kubernetes Customization Guide
 <https://zero-to-jupyterhub.readthedocs.io/en/latest/#customization-guide>`_.
 
+If you want to customise the spawner you can subclass it in ``extraConfig``.
+For example::
+
+  binderhub:
+    jupyterhub:
+      hub:
+        extraConfig:
+          10-binder-customisations: |
+            class MyCustomBinderSpawner(BinderSpawner):
+                ...
+
+            c.JupyterHub.spawner_class = MyCustomBinderSpawner
+
+BinderHub uses the `jupyterhub.hub.extraConfig setting
+<https://zero-to-jupyterhub.readthedocs.io/en/latest/administrator/advanced.html#hub-extraconfig>`_
+to customise JupyterHub.
+For example, ``BinderSpawner`` is defined under the ``00-binder`` key.
+Keys are evaluated in alphanumeric order, so later keys such as
+``10-binder-customisations`` can use objects defined in earlier keys.
 
 About page customization
 ------------------------
@@ -42,9 +61,9 @@ Here it is explained by a minimal example which shows how to use a custom logo.
 Before configuring BinderHub to use custom templates and static files,
 you have to provide these files to the binder pod where the application runs.
 One way to do this using `Init Containers
-<https://kubernetes.io/docs/concepts/workloads/pods/init-containers/>`_ and a git repo.
+<https://kubernetes.io/docs/concepts/workloads/pods/init-containers/>`_ and a Git repo.
 
-Firstly assume that you have a git repo ``binderhub_custom_files`` which holds your custom files::
+Firstly assume that you have a Git repo ``binderhub_custom_files`` which holds your custom files::
 
     binderhub_custom_files/
     ├── static
@@ -69,7 +88,7 @@ updates only the source url of the logo in order to use your custom logo::
     It is also possible to have completely new template instead of extending the base one.
     Then BinderHub will ignore the base one.
 
-Now you can use ``Init Containers`` to clone that git repo into a volume (``custom-templates``)
+Now you can use ``Init Containers`` to clone that Git repo into a volume (``custom-templates``)
 which is mounted to both init container and binder container.
 To do that add the following into your ``config.yaml``::
 
@@ -125,3 +144,57 @@ To do that update your ``config.yaml`` by the following::
     to hold the value of ``extra_static_url_prefix`` is also defined,
     which was used in custom ``page.html``.
     This is good to do specially if you have many custom templates and static files.
+
+.. _repo-specific-config:
+
+Custom configuration for specific repositories
+----------------------------------------------
+
+Sometimes you would like to provide a repository-specific configuration.
+For example, if you'd like certain repositories to have **higher pod quotas**
+than others, or if you'd like to provide certain resources to a subset of
+repositories.
+
+To override the configuration for a specific repository, you can provide
+a list of dictionaries that allow you to provide a pattern to match against
+each repository's specification, and override configuration values for any
+repositories that match this pattern.
+
+.. note::
+
+   If you provide **multiple patterns that match a single repository** in your
+   spec-specific configuration, then **later values in the list will override
+   earlier values**.
+
+To define this list of patterns and configuration overrides, use the
+following pattern in your Helm Chart (here we show an example using
+``GitHubRepoProvider``, but this works for other RepoProviders as well):
+
+.. code-block:: yaml
+
+   config:
+       GitHubRepoProvider:
+         spec_config:
+           - pattern: ^ines/spacy-binder.*:
+             config:
+                key1: value1
+           - pattern: pattern2
+             config:
+                key1: othervalue1
+                key2: othervalue2
+
+For example, the following specification configuration will assign a
+pod quota of 999 to the spacy-binder repository, and a pod quota
+of 1337 to any repository in the JupyterHub organization.
+
+.. code-block:: yaml
+
+   config:
+       GitHubRepoProvider:
+         spec_config:
+           - pattern: ^ines/spacy-binder.*:
+             config:
+                quota: 999
+           - pattern: ^jupyterhub.*
+             config:
+                quota: 1337

@@ -15,6 +15,8 @@ from tornado import web, gen
 from tornado.httpclient import AsyncHTTPClient, HTTPRequest, HTTPError
 from traitlets.config import LoggingConfigurable
 from traitlets import Integer, Unicode, Bool
+from jupyterhub.traitlets import Callable
+from jupyterhub.utils import maybe_future
 
 # pattern for checking if it's an ssh repo and not a URL
 # used only after verifying that `://` is not present
@@ -33,6 +35,12 @@ class Launcher(LoggingConfigurable):
     hub_api_token = Unicode(help="The API token for the Hub")
     hub_url = Unicode(help="The URL of the Hub")
     create_user = Bool(True, help="Create a new Hub user")
+    allow_named_servers = Bool(
+        os.getenv('JUPYTERHUB_ALLOW_NAMED_SERVERS', "false") == "true",
+        config=True,
+        help="Named user servers are allowed. This is used only when authentication is enabled and "
+             "to set unique names for user servers."
+    )
     retries = Integer(
         4,
         config=True,
@@ -49,6 +57,18 @@ class Launcher(LoggingConfigurable):
         Time (seconds) to wait between retries for Hub API requests.
 
         Time is scaled exponentially by the retry attempt (i.e. 2, 4, 8, 16 seconds)
+        """
+    )
+    pre_launch_hook = Callable(
+        None,
+        config=True,
+        allow_none=True,
+        help="""
+        An optional hook function that you can use to implement checks before starting a user's server. 
+        For example if you have a non-standard BinderHub deployment, 
+        in this hook you can check if the current user has right to launch a new repo.
+        
+        Receives 5 parameters: launcher, image, username, server_name, repo_url
         """
     )
 
@@ -117,7 +137,7 @@ class Launcher(LoggingConfigurable):
         # add a random suffix to avoid collisions for users on the same image
         return '{}-{}'.format(prefix, ''.join(random.choices(SUFFIX_CHARS, k=SUFFIX_LENGTH)))
 
-    async def launch(self, image, username, server_name='', repo_url=''):
+    async def launch(self, image, username, server_name='', repo_url='', extra_args=None):
         """Launch a server for a given image
 
         - creates a temporary user on the Hub if authentication is not enabled
@@ -127,6 +147,7 @@ class Launcher(LoggingConfigurable):
           - `url`: the URL of the server
           - `image`: image spec
           - `repo_url`: the url of the repo
+          - `extra_args`: Dictionary of extra arguments passed to the server
           - `token`: the token for the server
         """
         # TODO: validate the image argument?
@@ -152,11 +173,16 @@ class Launcher(LoggingConfigurable):
             if server_name in user_data['servers']:
                 raise web.HTTPError(409, "User %s already has a running server." % username)
 
+        if self.pre_launch_hook:
+            await maybe_future(self.pre_launch_hook(self, image, username, server_name, repo_url))
+
         # data to be passed into spawner's user_options during launch
         # and also to be returned into 'ready' state
         data = {'image': image,
                 'repo_url': repo_url,
                 'token': base64.urlsafe_b64encode(uuid.uuid4().bytes).decode('ascii').rstrip('=\n')}
+        if extra_args:
+            data.update(extra_args)
 
         # server name to be used in logs
         _server_name = " {}".format(server_name) if server_name else ''

@@ -4,6 +4,17 @@
 <meta id="base-url" data-url="{{base_url}}">
 <meta id="badge-base-url" data-url="{{badge_base_url}}">
 <script src="{{static_url("dist/bundle.js")}}"></script>
+
+
+<!-- Social media previews -->
+<meta property="og:title" content="The Binder Project">
+<meta property="og:image" content="https://mybinder.org/static/images/logo_social.png">
+<meta property="og:description" content="Reproducible, sharable, interactive computing environments.">
+<meta property="og:image:width" content="1334">
+<meta property="og:image:height" content="700">
+<meta property="og:image:alt" content="The Binder Project Logo" />
+<meta name="twitter:card" content="summary_large_image">
+
 {{ super() }}
 {% endblock head %}
 
@@ -25,9 +36,8 @@
         <h4 id="form-header" class='row'>Build and launch a repository</h4>
         <input type="hidden" id="provider_prefix" value="gh"/>
         <div class="form-group row">
-          <label for="repository">GitHub repo or Gist name or GitLab.com URL</label>
+          <label for="repository">Git repository URL (github.com, gitlab.com or self-host)</label>
           <div class="input-group">
-            <input class="form-control" type="text" id="repository" data-lpignore="true" placeholder="GitHub repository name or link"/>
             <div class="input-group-btn" id="url-type-btn">
               <button type="button" class="btn btn-secondary dropdown-toggle"
                 data-toggle="dropdown" aria-haspopup="true" aria-expanded="false"
@@ -44,8 +54,11 @@
                 <li class="dropdown-item" value="gl"><a href="#">GitLab.com</a></li>
                 <li class="dropdown-item" value="git"><a href="#">Git repository</a></li>
                 <li class="dropdown-item" value="zenodo"><a href="#">Zenodo DOI</a></li>
+                <li class="dropdown-item" value="figshare"><a href="#">Figshare DOI</a></li>
+                <li class="dropdown-item" value="dataverse"><a href="#">Dataverse DOI</a></li>
               </ul>
             </div>
+            <input class="form-control" type="text" id="repository" data-lpignore="true" placeholder="GitHub repository name or link"/>
           </div>
         </div>
         <div class="form-row row">
